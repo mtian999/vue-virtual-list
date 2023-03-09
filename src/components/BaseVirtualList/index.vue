@@ -1,10 +1,6 @@
 <template>
-  <div class="container">
-    <div
-      ref="virtualList"
-      class="virtual-list-container"
-      @scroll.prevent="virtualScroll"
-    >
+  <div class="container" :style="containerStyle">
+    <div ref="virtualList" class="virtual-list-container" @scroll.prevent="virtualScroll">
       <div class="virtual-list-box" :style="virtualBoxStyle">
         <div ref="refContent" class="content" :style="virtualStyle">
           <item
@@ -51,13 +47,17 @@
 import { debounce, throttle, cloneDeep } from 'lodash'
 import Item from './item'
 
+// 最多渲染
+const MAX_RENDER_NUM = 100
 // 待冻结的缓存个数
 const CACHE_NUM = 0
 // 头部缓存个数（头部缓存个数大于0，会导致子项高度变化再还原后，渲染锚点改变）
-const HEAD_PRELOAD = 0
+const HEAD_PRELOAD = 2
 // 尾部缓存个数
 const FOOTER_PRELOAD = HEAD_PRELOAD + 1
-const compType = {
+
+// 组件预设高度（非必须）
+let compType = {
   advanced: 66,
   dataRow: 85,
   dataRowItem: 40,
@@ -69,7 +69,7 @@ const binarySearch = function (list, target) {
   const len = list.length
   let left = 0
   let right = len - 1
-  let tempIndex = null
+  let bestMatchIndex = null
 
   while (left <= right) {
     let midIndex = (left + right) >> 1
@@ -82,14 +82,14 @@ const binarySearch = function (list, target) {
       left = midIndex + 1
     } else {
       // list不一定存在与target相等的项，不断收缩右区间，寻找最匹配的项
-      if (tempIndex === null || tempIndex > midIndex) {
-        tempIndex = midIndex
+      if (bestMatchIndex === null || bestMatchIndex > midIndex) {
+        bestMatchIndex = midIndex
       }
       right--
     }
   }
   // 如果没有搜索到完全匹配的项 就返回最匹配的项
-  return tempIndex
+  return bestMatchIndex
 }
 export default {
   name: 'BaseVirtualList',
@@ -102,18 +102,22 @@ export default {
         return []
       },
     },
-    // 是否解冻
-    isUnfreeze: {
-      type: Boolean,
-      default: true,
-    },
     // 唯一性主键的键名
     keyName: {
       type: String,
       default: 'key',
     },
+    // 是否解冻
+    isUnfreeze: {
+      type: Boolean,
+      default: true,
+    },
+    unfreezeKeyName: {
+      type: [String, Array],
+      default: 'children',
+    },
     virtualListHeight: {
-      type: Number,
+      type: [Number, String],
     },
   },
   data() {
@@ -149,6 +153,21 @@ export default {
     realDataLen() {
       return this.realData.length
     },
+    containerStyle() {
+      let virtualListHeight = this.virtualListHeight
+      if (virtualListHeight) {
+        if (Object.prototype.toString.call(virtualListHeight) === '[object Number]') {
+          virtualListHeight = virtualListHeight + 'px'
+        }
+        return {
+          height: virtualListHeight,
+        }
+      } else {
+        return {
+          height: '100%',
+        }
+      }
+    },
     virtualBoxStyle() {
       return {
         minHeight: `${this.totalHeight}px`,
@@ -178,21 +197,14 @@ export default {
     },
     dataRowHeader(dataRowHeader) {
       if (dataRowHeader) {
-        this.waitScrollOffsetData = Object.assign(
-          {},
-          this.waitScrollOffsetData,
-          {
-            offsetScroll: dataRowHeader._height * -1,
-          }
-        )
+        this.waitScrollOffsetData = Object.assign({}, this.waitScrollOffsetData, {
+          offsetScroll: dataRowHeader._height * -1,
+        })
       }
     },
     waitScrollOffsetData(newWaitScrollOffsetData) {
       this.$nextTick(() => {
-        if (
-          newWaitScrollOffsetData.isScrollToTarget &&
-          newWaitScrollOffsetData.offsetScroll
-        ) {
+        if (newWaitScrollOffsetData.isScrollToTarget && newWaitScrollOffsetData.offsetScroll) {
           const offsetScroll = newWaitScrollOffsetData.offsetScroll
           if (offsetScroll !== undefined) {
             this.offsetScrollHandle(offsetScroll)
@@ -212,16 +224,13 @@ export default {
       leading: false,
       trailing: true,
     })
-    this.debounceFrozenDataProcessByCompatible = throttle(
-      this.frozenDataProcessByCompatible,
-      5000,
-      {
-        leading: false,
-      }
-    )
+    this.debounceFrozenDataProcessByCompatible = throttle(this.frozenDataProcessByCompatible, 5000, {
+      leading: false,
+    })
   },
   mounted() {
     this.initRender()
+    window.bv = this
   },
   methods: {
     initRender() {
@@ -245,16 +254,11 @@ export default {
     },
     headPreviewItemMountedHandle({ itemData: headPreviewItem, itemHeight }) {
       if (this.isUpdatingHeadPreviewItem === false) {
+        this.isUpdatingHeadPreviewItem = true
         const itemData = this.realData[headPreviewItem.index]
-        if (
-          itemData &&
-          (itemData._height !== itemHeight ||
-            itemData._isInitialHeight === true)
-        ) {
-          this.isUpdatingHeadPreviewItem = true
+        if (itemData && (itemData._height !== itemHeight || itemData._isInitialHeight === true)) {
           itemData._height = itemHeight
           itemData._isInitialHeight = false
-          compType[itemData.type] = itemHeight
           if (this.waitUpdateItemMinIdx > itemData.index) {
             this.waitUpdateItemMinIdx = itemData.index
           }
@@ -263,22 +267,17 @@ export default {
         if (this.waitUpdateItemMinIdx < this.realDataLen) {
           this.updateRealHeight()
         }
-        this.$nextTick(() => {
-          this.isUpdatingHeadPreviewItem = false
-        })
+        this.isUpdatingHeadPreviewItem = false
       }
     },
     headPreviewItemSizeChangeHandle({ itemData, itemHeight }) {
       const realItemData = this.realData[itemData.index]
-      if (
-        realItemData._height !== itemHeight ||
-        realItemData._isInitialHeight === true
-      ) {
+      if (realItemData._height !== itemHeight || realItemData._isInitialHeight === true) {
         // 如果头部预加载子项的headPreviewItem高度和realData同index的子项数据储存的不同，则更新
 
         realItemData._height = itemHeight
         realItemData._isInitialHeight = false
-        compType[realItemData.type] = itemHeight
+
         if (this.waitUpdateItemMinIdx > itemData.index) {
           this.waitUpdateItemMinIdx = itemData.index
         }
@@ -289,17 +288,14 @@ export default {
       this.itemSizeChangeEndHandle()
     },
     itemSizeChangeEndHandle() {
+      compType = Object.assign({}, compType, this.getAverageCompPreHeight(this.realData))
       this.updateRealHeight()
     },
     itemSizeChangeHandle({ itemData, itemHeight }) {
-      if (
-        itemData._height !== itemHeight ||
-        itemData._isInitialHeight === true
-      ) {
+      if (itemData._height !== itemHeight || itemData._isInitialHeight === true) {
         this.isSizeChange = true
         itemData._height = itemHeight
         itemData._isInitialHeight = false
-        compType[itemData.type] = itemHeight
         if (this.waitUpdateItemMinIdx > itemData.index) {
           this.waitUpdateItemMinIdx = itemData.index
         }
@@ -330,23 +326,20 @@ export default {
     frozenDataProcess(deadline) {
       this.isFreezing = false
 
-      while (
-        deadline.timeRemaining() > 30 &&
-        this.waitFrozenList.length > CACHE_NUM
-      ) {
+      while (deadline.timeRemaining() > 30 && this.waitFrozenList.length > CACHE_NUM) {
         const currentNode = this.waitFrozenList.shift()
         // 冻结children
         const isFrozen = Object.isFrozen(currentNode.children)
         if (isFrozen === false) {
           // 因为表单更新是update item 的cell属性，所以item的内存地址不能变，不然就失去双向绑定
-          currentNode.children.forEach((item) => {
+          currentNode.children.forEach(item => {
             item.cell = cloneDeep(item.cell)
           })
           currentNode.children = Object.freeze(currentNode.children)
         }
       }
       if (this.waitFrozenList.length > CACHE_NUM) {
-        // 留下10个缓存
+        // 留下CACHE_NUM个缓存
         this.frozenDataHandle()
       }
     },
@@ -362,20 +355,12 @@ export default {
       }
     },
     virtualScroll(e) {
-      // if (e.target.scrollTop - this.scrollTopVal > 88) {
-      //   // 控制滚动速度
-      //   e.target.scrollTop = this.scrollTopVal + 88
-      // }
-
       const diff = e.target.scrollTop - this.scrollTopVal
       this.scrollTopVal += diff
 
-      if (this.isAmendScrollTop) {
-        this.isAmendScrollTop = false
-        return
+      if (this.isAmendScrollTop === false) {
+        this.getRenderList()
       }
-
-      this.getRenderList()
 
       this.isAmendScrollTop = false
     },
@@ -407,8 +392,7 @@ export default {
       this.isUpdatingRealHeight = true
       let totalHeight = 0
       const updateEndIdx = realDataLen
-      const renderStartNodeHeight =
-        this.realData[this.renderStartNode.index]._height
+      const renderStartNodeHeight = this.realData[this.renderStartNode.index]._height
       for (let i = updateStartIdx; i < updateEndIdx; i++) {
         const item = this.realData[i]
         const preItem = this.realData[i - 1]
@@ -430,25 +414,18 @@ export default {
         totalHeight = item._topNum + item._height
       }
       this.totalHeight = totalHeight
-      const toScrollTop =
-        this.realData[this.renderStartNode.index]?._topNum +
-        this.renderStartNode.scrollOffset
+      const toScrollTop = this.realData[this.renderStartNode.index]?._topNum + this.renderStartNode.scrollOffset
       let refVirtualList = this.$refs.virtualList
-      console.log(
-        'sizeChange',
-        firstChangeIdx,
-        this.renderStartNode.index,
-        renderStartNodeHeight
-      )
+      console.log('sizeChange', firstChangeIdx, this.renderStartNode.index, renderStartNodeHeight)
       if (refVirtualList && refVirtualList.scrollTop !== toScrollTop) {
         // 因为renderStartNode之前的子项高度改变，导致页面渲染内容改变，所以要修正滚动高度，修正transform的位移
         this.isAmendScrollTop = true
-        this.$refs.virtualList.scrollTop = toScrollTop
-        this.virtualStyle = {
-          transform: `translate3d(0, ${
-            this.realData[this.renderStartNode.index]?._topNum
-          }px, 0)`,
-        }
+        this.$nextTick(() => {
+          this.$refs.virtualList.scrollTop = toScrollTop
+          this.virtualStyle = {
+            transform: `translate3d(0, ${this.realData[this.renderStartNode.index]?._topNum}px, 0)`,
+          }
+        })
       } else {
         this.getRenderList()
       }
@@ -475,13 +452,12 @@ export default {
     offsetScrollHandle(offsetScroll) {
       if (offsetScroll) {
         // 锚点补上偏移
-        this.$refs.virtualList.scrollTop =
-          this.$refs.virtualList.scrollTop + offsetScroll
+        this.$refs.virtualList.scrollTop = this.$refs.virtualList.scrollTop + offsetScroll
       }
     },
     scrollToTargetHandle(virtualListItemIdx) {
       this.updateRealHeight()
-      const res = this.realData.find((item) => {
+      const res = this.realData.find(item => {
         return item.index === virtualListItemIdx
       })
       if (res) {
@@ -510,10 +486,7 @@ export default {
         index: start,
         scrollOffset: top - transformHeight,
       }
-      if (
-        start === this.renderList?.[0]?.index &&
-        this.isSizeChange === false
-      ) {
+      if (start === this.renderList?.[0]?.index && this.isSizeChange === false) {
         // 起点start相同并且size也相同，则不更新renderList
         return
       } else {
@@ -524,7 +497,7 @@ export default {
         transform: `translate3d(0, ${transformHeight}px, 0)`,
       }
 
-      const fillHeight = 15 // 最多同时渲染 15 条
+      const fillHeight = MAX_RENDER_NUM // 最多同时渲染条数
       let end = start + fillHeight
       end = Math.min(end, this.realDataLen)
 
@@ -535,6 +508,7 @@ export default {
       if (this.screenHeight === 0) {
         this.screenHeight = this.$refs.virtualList.offsetHeight
       }
+
       for (let i = start; i < end; i++) {
         const currentNode = this.realData[i]
         const nextNode = this.realData[i + 1]
@@ -565,32 +539,28 @@ export default {
               heightSum -= maxNodeHeight
             }
           }
+        } else {
+          break
         }
       }
-
-      if (
-        start === this.renderList?.[0]?.index &&
-        this.renderList.length === result.length
-      ) {
+      if (start === this.renderList?.[0]?.index && this.renderList.length === result.length) {
         // 起点start相同并且result的length也相同，则不更新renderList
         return
       }
+
       if (result) {
         // 数据行头部显隐逻辑
-        const res = result.find((item) => {
+        const res = result.find(item => {
           return item.type === 'dataRowItem'
         })
         if (res) {
           // 渲染列表里是否有数据行头部
-          let dadaRowHeader = result.find((item) => {
+          let dadaRowHeader = result.find(item => {
             return item.key === res.rowDataKey
           })
           // 渲染列表里没有数据行头部，并且destroyedData里也没数据行头部，则储存到destroyedData
-          if (
-            dadaRowHeader === undefined &&
-            this.destroyedData[res.rowDataKey] === undefined
-          ) {
-            dadaRowHeader = this.realData.find((item) => {
+          if (dadaRowHeader === undefined && this.destroyedData[res.rowDataKey] === undefined) {
+            dadaRowHeader = this.realData.find(item => {
               return item.key === res.rowDataKey
             })
             if (dadaRowHeader) {
@@ -610,11 +580,7 @@ export default {
       if (resultEndItem) {
         const resultEndIdx = resultEndItem.index
         const footerExtraStartIdx = resultEndIdx + 1
-        for (
-          let i = footerExtraStartIdx;
-          i < footerExtraStartIdx + FOOTER_PRELOAD;
-          i++
-        ) {
+        for (let i = footerExtraStartIdx; i < footerExtraStartIdx + FOOTER_PRELOAD; i++) {
           const endItem = this.realData[i]
           if (endItem) {
             result.push(endItem)
@@ -624,6 +590,81 @@ export default {
 
       this.renderList = result
       // console.log(this.realData)
+    },
+    /**
+     * 将列表子项的目标属性解冻，会修改原数据
+     */
+    unfreezeHandle(realDataItem) {
+      const unfreezeKeyName = this.unfreezeKeyName
+      let ArrUnfreezeKeyName = []
+      ArrUnfreezeKeyName = ArrUnfreezeKeyName.concat(unfreezeKeyName)
+      ArrUnfreezeKeyName.forEach(keyName => {
+        const temp = realDataItem[keyName]
+        if (temp) {
+          // 解冻children
+          const isFrozen = Object.isFrozen(temp)
+          if (isFrozen && this.isUnfreeze) {
+            if (Array.isArray(temp)) {
+              realDataItem[keyName] = [].concat(temp)
+            } else {
+              realDataItem[keyName] = Object.assign({}, temp)
+            }
+          }
+        }
+      })
+      return realDataItem
+    },
+    freezeHandle(realDataItem) {
+      const unfreezeKeyName = this.unfreezeKeyName
+      let ArrUnfreezeKeyName = []
+      ArrUnfreezeKeyName = ArrUnfreezeKeyName.concat(unfreezeKeyName)
+      ArrUnfreezeKeyName.forEach(keyName => {
+        const temp = realDataItem[keyName]
+        if (temp) {
+          // 冻结children
+          const isFrozen = Object.isFrozen(temp)
+          if (isFrozen === false) {
+            if (Array.isArray(temp)) {
+              realDataItem[keyName] = [].concat(temp)
+            } else {
+              realDataItem[keyName] = Object.assign({}, temp)
+            }
+            realDataItem[keyName] = Object.freeze(temp)
+          }
+        }
+      })
+      const isFrozen = Object.isFrozen(realDataItem.children)
+      if (isFrozen === false) {
+        // 因为表单更新是update item 的cell属性，所以item的内存地址不能变，不然就失去双向绑定
+        realDataItem.children.forEach(item => {
+          item.cell = cloneDeep(item.cell)
+        })
+        realDataItem.children = Object.freeze(realDataItem.children)
+      }
+    },
+    getAverageCompPreHeight(realData) {
+      const averageCompPreHeight = {}
+      const compType = {}
+      for (let i = 0; i < realData.length; i++) {
+        const realDataItem = realData[i]
+        if (averageCompPreHeight[realDataItem.type] === undefined) {
+          averageCompPreHeight[realDataItem.type] = {
+            totalHeight: 0,
+            count: 0,
+          }
+        }
+        if (realDataItem._isInitialHeight === false) {
+          averageCompPreHeight[realDataItem.type].totalHeight += realDataItem._height
+          averageCompPreHeight[realDataItem.type].count += 1
+        }
+      }
+      Object.keys(averageCompPreHeight).forEach(key => {
+        const { totalHeight, count } = averageCompPreHeight[key]
+        if (count > 0) {
+          compType[key] = Math.floor(totalHeight / count)
+        }
+      })
+      return compType
     },
   },
 }

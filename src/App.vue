@@ -56,7 +56,7 @@ function getListData() {
       type: 'div',
     })
   }
-  return listData
+  return Object.freeze(listData)
 }
 export default {
   name: 'App',
@@ -68,7 +68,6 @@ export default {
       listData: getListData(),
     }
   },
-  methods: {},
 }
 </script>
 
