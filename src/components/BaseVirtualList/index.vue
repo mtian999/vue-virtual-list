@@ -132,6 +132,7 @@ export default {
     freezeKeyName: {
       type: [String, Array],
     },
+    // 虚拟列表容器高度
     virtualListHeight: {
       type: [Number, String],
     },
@@ -553,6 +554,7 @@ export default {
         }
         if (heightSum < this.screenHeight * 1.5) {
           if (this.isUnfreeze) {
+            // 解冻，会修改currentNode
             this.unfreezeHandle(this.currentRealData, currentNode, this.freezeKeyName)
           }
           result.push(currentNode)
@@ -662,17 +664,21 @@ export default {
             const isFrozen = Object.isFrozen(temp)
             if (isFrozen === false) {
               const [parentKeyName, childrenKeyName] = splitLastDot(keyName)
-              const cloneTemp = cloneDeep(temp)
+              const cloneTemp = Object.freeze(cloneDeep(temp))
               if (childrenKeyName === '') {
-                realDataItem[parentKeyName] = Object.freeze(cloneTemp)
+                realDataItem[parentKeyName] = cloneTemp
               } else {
-                getValueByPath(realDataItem, parentKeyName)[childrenKeyName] = Object.freeze(cloneTemp)
+                getValueByPath(realDataItem, parentKeyName)[childrenKeyName] = cloneTemp
               }
             }
+            realData[realDataItem.index] = { ...realDataItem }
           }
         })
       } else {
+        // 清空realDataItem的Observer
         realData[realDataItem.index] = cloneDeep(realDataItem)
+        // 清空realDataItem的Observer，并冻结
+        // realData[realDataItem.index] =Object.freeze(cloneDeep(realDataItem))
       }
     },
     getAverageCompPreHeight(realData) {

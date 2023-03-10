@@ -14,7 +14,7 @@ vue2 虚拟列表组件，为什么又要写个重复的轮子，因为我发现
 
 ## Advantages
 
-- 只需要 3 个属性，简单，非常容易使用。
+- 只需要 2 个属性，简单，非常容易使用。
 
 - 大数据列表，渲染性能高，效率高。
 
@@ -24,11 +24,10 @@ vue2 虚拟列表组件，为什么又要写个重复的轮子，因为我发现
 
 ### Required props
 
-| **&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Prop&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;** | **Type** | **Description**                                                                    |
-| -------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------- | ---------------------------------------------------------------------------------- |
-| `realData`                                                                                                                                                           | Array    | 列表数据                                                                           |
-| `keyName`                                                                                                                                                            | String   | 从每个数据对象中的唯一键。它的值在数据源中必须是唯一的。                           |
-| `isUnfreeze`                                                                                                                                                         | Boolean  | 是否解冻数据，建议冻结多层级的对象，如果有需要动态响应的表单数据，当渲染时再解冻。 |
+| **&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Prop&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;** | **Type** | **Description**                                                             |
+| -------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------- | --------------------------------------------------------------------------- |
+| `realData`                                                                                                                                                           | Array    | 列表数据，建议冻结（例如：realData="Object.freeze(data)"），减少 Observer。 |
+| `keyName`                                                                                                                                                            | String   | 从每个数据对象中的唯一键。它的值在数据源中必须是唯一的。                    |
 
 ### Optional props
 
@@ -42,6 +41,18 @@ vue2 虚拟列表组件，为什么又要写个重复的轮子，因为我发现
       <th>Default</th>
       <th>Description</th>
     </tr>
+    <tr>
+      <td><code>isUnfreeze</code></td>
+      <td>Boolean</td>
+      <td>true</td>
+      <td>是否解冻数据</td>
+    </tr>
+    <tr>
+      <td><code>freezeKeyName</code></td>
+      <td>[String, Array]</td>
+      <td>undefined</td>
+      <td>组件卸载时，想要冻结的属性（为空则默认深克隆子项重新赋值，清除子项的全部Observer）</td>
+    </tr> 
     <tr>
       <td><code>virtualListHeight</code></td>
       <td>Number|String</td>
@@ -75,7 +86,7 @@ vue2 虚拟列表组件，为什么又要写个重复的轮子，因为我发现
 
 ## Attentions
 
-个人认为，虚拟列表的性能大户是对象的监听器，Observer。所以建议清理未渲染 Observer。首先渲染前直接冻结列表数据，然后，如果是只读列表，卸载的子项组件数据需重新冻结；如果是可编辑列表，则按个人需求重新冻结不需要动态响应的属性。
+个人认为，虚拟列表的性能大户是对象的监听器， Observer 。所以我会清理未渲染组件数据的 Observer 。realData 赋值时请冻结列表数据，然后，如果是只读列表，赋值 isUnfreeze 为 false,则子项数据全部冻结；如果是可编辑列表，赋值 isUnfreeze 为 true，则不冻结子项数据，且子项数据组件卸载后清理子项数据的 Observer。
 
 ## Project setup
 
