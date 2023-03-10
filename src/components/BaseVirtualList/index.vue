@@ -2,7 +2,7 @@
   <div class="container" :style="containerStyle">
     <div ref="virtualList" class="virtual-list-container" @scroll.prevent="virtualScroll">
       <div class="virtual-list-box" :style="virtualBoxStyle">
-        <div ref="refContent" class="content" :style="virtualStyle">
+        <div class="content" :style="virtualStyle">
           <item
             v-for="item of renderList"
             class="content-item"
@@ -65,6 +65,22 @@ let compType = {
   text: 66,
   group: 46,
 }
+
+function getValueByPath(obj, path) {
+  const props = path.split('.')
+  let value = obj
+  for (let i = 0; i < props.length; i++) {
+    value = value[props[i]]
+    if (value === undefined) {
+      break
+    }
+  }
+  return value
+}
+function splitLastDot(str) {
+  const lastIndex = str.lastIndexOf('.')
+  return lastIndex === -1 ? [str, ''] : [str.substr(0, lastIndex), str.substr(lastIndex + 1)]
+}
 const binarySearch = function (list, target) {
   const len = list.length
   let left = 0
@@ -73,7 +89,7 @@ const binarySearch = function (list, target) {
 
   while (left <= right) {
     let midIndex = (left + right) >> 1
-    const targetBottom = list[midIndex]._topNum + list[midIndex]._height
+    const targetBottom = list[midIndex]._nodeInfo._topNum + list[midIndex]._nodeInfo._height
     let midVal = targetBottom
 
     if (midVal === target) {
@@ -112,9 +128,9 @@ export default {
       type: Boolean,
       default: true,
     },
-    unfreezeKeyName: {
+    // 组件卸载时，想要冻结的属性（为空则默认深克隆子项重新赋值，清除子项的全部Observer）
+    freezeKeyName: {
       type: [String, Array],
-      default: 'children',
     },
     virtualListHeight: {
       type: [Number, String],
@@ -122,6 +138,7 @@ export default {
   },
   data() {
     return {
+      currentRealData: [],
       screenHeight: 0,
       preItemHeight: 50,
       totalHeight: 0, // 虚拟列表总高度
@@ -136,6 +153,7 @@ export default {
       destroyedData: {}, // 被卸载的数据行头部数据
       showKey: '', // 需要绝对定位显示，显示的key
       waitFrozenList: [], // 等待冻结的数据列表
+      isHasWaitFrozenList: new WeakMap(),
       isFreezing: false, // 是否在冻结中
       // 修正滚动的数据
       waitScrollOffsetData: {
@@ -188,9 +206,10 @@ export default {
         this.headPreviewItem = null
         let res
         const start = startIdx
-        const headPreviewItem = this.realData[start - 1]
+        const headPreviewItem = this.currentRealData[start - 1]
         if (headPreviewItem) {
-          res = Object.assign({}, headPreviewItem)
+          res = { ...headPreviewItem }
+          res._nodeInfo = { ...headPreviewItem._nodeInfo }
         }
         this.headPreviewItem = res
       },
@@ -198,7 +217,7 @@ export default {
     dataRowHeader(dataRowHeader) {
       if (dataRowHeader) {
         this.waitScrollOffsetData = Object.assign({}, this.waitScrollOffsetData, {
-          offsetScroll: dataRowHeader._height * -1,
+          offsetScroll: dataRowHeader._nodeInfo._height * -1,
         })
       }
     },
@@ -235,7 +254,8 @@ export default {
   methods: {
     initRender() {
       this.renderList = []
-      this.initRealHeight()
+
+      this.initCurrentRealDataAndRealHeight()
       this.$nextTick(() => {
         this.getRenderList()
       })
@@ -255,10 +275,10 @@ export default {
     headPreviewItemMountedHandle({ itemData: headPreviewItem, itemHeight }) {
       if (this.isUpdatingHeadPreviewItem === false) {
         this.isUpdatingHeadPreviewItem = true
-        const itemData = this.realData[headPreviewItem.index]
-        if (itemData && (itemData._height !== itemHeight || itemData._isInitialHeight === true)) {
-          itemData._height = itemHeight
-          itemData._isInitialHeight = false
+        const itemData = this.currentRealData[headPreviewItem.index]
+        if (itemData && (itemData._nodeInfo._height !== itemHeight || itemData._nodeInfo._isInitialHeight === true)) {
+          itemData._nodeInfo._height = itemHeight
+          itemData._nodeInfo._isInitialHeight = false
           if (this.waitUpdateItemMinIdx > itemData.index) {
             this.waitUpdateItemMinIdx = itemData.index
           }
@@ -271,12 +291,12 @@ export default {
       }
     },
     headPreviewItemSizeChangeHandle({ itemData, itemHeight }) {
-      const realItemData = this.realData[itemData.index]
-      if (realItemData._height !== itemHeight || realItemData._isInitialHeight === true) {
+      const realItemData = this.currentRealData[itemData.index]
+      if (realItemData._nodeInfo._height !== itemHeight || realItemData._nodeInfo._isInitialHeight === true) {
         // 如果头部预加载子项的headPreviewItem高度和realData同index的子项数据储存的不同，则更新
 
-        realItemData._height = itemHeight
-        realItemData._isInitialHeight = false
+        realItemData._nodeInfo._height = itemHeight
+        realItemData._nodeInfo._isInitialHeight = false
 
         if (this.waitUpdateItemMinIdx > itemData.index) {
           this.waitUpdateItemMinIdx = itemData.index
@@ -288,14 +308,14 @@ export default {
       this.itemSizeChangeEndHandle()
     },
     itemSizeChangeEndHandle() {
-      compType = Object.assign({}, compType, this.getAverageCompPreHeight(this.realData))
+      compType = Object.assign({}, compType, this.getAverageCompPreHeight(this.currentRealData))
       this.updateRealHeight()
     },
     itemSizeChangeHandle({ itemData, itemHeight }) {
-      if (itemData._height !== itemHeight || itemData._isInitialHeight === true) {
+      if (itemData._nodeInfo._height !== itemHeight || itemData._nodeInfo._isInitialHeight === true) {
         this.isSizeChange = true
-        itemData._height = itemHeight
-        itemData._isInitialHeight = false
+        itemData._nodeInfo._height = itemHeight
+        itemData._nodeInfo._isInitialHeight = false
         if (this.waitUpdateItemMinIdx > itemData.index) {
           this.waitUpdateItemMinIdx = itemData.index
         }
@@ -303,12 +323,15 @@ export default {
     },
     // 添加node到待冻结列表
     itemDestroyedHandle(node) {
+      if (!this.isUnfreeze && !this.freezeKeyName) {
+        // 如果不需要解冻，并且需要冻结keyName为空，则退出
+        return
+      }
       const currentNode = node
-      if (currentNode.children) {
-        const isFrozen = Object.isFrozen(currentNode.children)
-        if (isFrozen === false) {
-          this.waitFrozenList.push(currentNode)
-        }
+      const isHas = this.isHasWaitFrozenList.has(currentNode)
+      if (!isHas) {
+        this.waitFrozenList.push(currentNode)
+        this.isHasWaitFrozenList.set(currentNode)
       }
       this.frozenDataHandle()
     },
@@ -329,13 +352,9 @@ export default {
       while (deadline.timeRemaining() > 30 && this.waitFrozenList.length > CACHE_NUM) {
         const currentNode = this.waitFrozenList.shift()
         // 冻结children
-        const isFrozen = Object.isFrozen(currentNode.children)
-        if (isFrozen === false) {
-          // 因为表单更新是update item 的cell属性，所以item的内存地址不能变，不然就失去双向绑定
-          currentNode.children.forEach(item => {
-            item.cell = cloneDeep(item.cell)
-          })
-          currentNode.children = Object.freeze(currentNode.children)
+        this.isHasWaitFrozenList.delete(currentNode)
+        if (this.isUnfreeze) {
+          this.freezeHandle(this.currentRealData, currentNode, this.freezeKeyName)
         }
       }
       if (this.waitFrozenList.length > CACHE_NUM) {
@@ -364,17 +383,26 @@ export default {
 
       this.isAmendScrollTop = false
     },
-    initRealHeight() {
+    initCurrentRealDataAndRealHeight() {
       let totalHeight = 0
-      this.realData.forEach((item, idx) => {
-        item.index = idx
-        item._topNum = totalHeight
-        if (item._height === undefined) {
-          item._height = compType[item.type] || this.preItemHeight
-          item._isInitialHeight = true
+      for (let i = 0; i < this.realDataLen; i++) {
+        const temp = { ...this.realData[i] }
+        if (temp._nodeInfo === undefined) {
+          temp._nodeInfo = {}
         }
-        totalHeight += item._height
-      })
+        temp.index = i
+        temp._nodeInfo._topNum = totalHeight
+        if (temp._nodeInfo._height === undefined) {
+          temp._nodeInfo._height = compType[temp.type] || this.preItemHeight
+          temp._nodeInfo._isInitialHeight = true
+        }
+        totalHeight += temp._nodeInfo._height
+        if (this.isUnfreeze) {
+          this.currentRealData[i] = temp
+        } else {
+          this.currentRealData[i] = Object.freeze(temp)
+        }
+      }
       this.totalHeight = totalHeight
     },
     updateRealHeight() {
@@ -392,29 +420,28 @@ export default {
       this.isUpdatingRealHeight = true
       let totalHeight = 0
       const updateEndIdx = realDataLen
-      const renderStartNodeHeight = this.realData[this.renderStartNode.index]._height
+      const renderStartNodeHeight = this.currentRealData[this.renderStartNode.index]._nodeInfo._height
       for (let i = updateStartIdx; i < updateEndIdx; i++) {
-        const item = this.realData[i]
-        const preItem = this.realData[i - 1]
+        const item = this.currentRealData[i]
+        const preItem = this.currentRealData[i - 1]
 
-        item.index = i
-        if (item._isInitialHeight === true) {
+        if (item._nodeInfo._isInitialHeight === true) {
           // 如果高度是初始赋值，则判断初始赋值是否有变化，有变化则重新赋值初始值
           const initialHeight = compType[item.type] || this.preItemHeight
-          if (item._height !== initialHeight) {
-            item._height = initialHeight
+          if (item._nodeInfo._height !== initialHeight) {
+            item._nodeInfo._height = initialHeight
           }
         }
         if (preItem) {
-          item._topNum = preItem._topNum + preItem._height
+          item._nodeInfo._topNum = preItem._nodeInfo._topNum + preItem._nodeInfo._height
         } else {
-          item._topNum = 0
+          item._nodeInfo._topNum = 0
         }
 
-        totalHeight = item._topNum + item._height
+        totalHeight = item._nodeInfo._topNum + item._nodeInfo._height
       }
       this.totalHeight = totalHeight
-      const toScrollTop = this.realData[this.renderStartNode.index]?._topNum + this.renderStartNode.scrollOffset
+      const toScrollTop = this.currentRealData[this.renderStartNode.index]?._nodeInfo._topNum + this.renderStartNode.scrollOffset
       let refVirtualList = this.$refs.virtualList
       console.log('sizeChange', firstChangeIdx, this.renderStartNode.index, renderStartNodeHeight)
       if (refVirtualList && refVirtualList.scrollTop !== toScrollTop) {
@@ -423,7 +450,7 @@ export default {
         this.$nextTick(() => {
           this.$refs.virtualList.scrollTop = toScrollTop
           this.virtualStyle = {
-            transform: `translate3d(0, ${this.realData[this.renderStartNode.index]?._topNum}px, 0)`,
+            transform: `translate3d(0, ${this.currentRealData[this.renderStartNode.index]?._nodeInfo._topNum}px, 0)`,
           }
         })
       } else {
@@ -436,14 +463,14 @@ export default {
       let start = 0
 
       // realData.some((item, index) => {
-      //   if (item._topNum > value) {
+      //   if (item._nodeInfo._topNum > value) {
       //     start = Math.max(0, index - 1)
       //     return true
       //   }
       // })
       start = binarySearch(list, value) || 0
       if (start === 0) {
-        if (value > list[list.length - 1]?._topNum) {
+        if (value > list[list.length - 1]?._nodeInfo._topNum) {
           start = list.length - 1 >= 0 ? list.length - 1 : 0
         }
       }
@@ -457,7 +484,7 @@ export default {
     },
     scrollToTargetHandle(virtualListItemIdx) {
       this.updateRealHeight()
-      const res = this.realData.find(item => {
+      const res = this.currentRealData.find(item => {
         return item.index === virtualListItemIdx
       })
       if (res) {
@@ -468,20 +495,20 @@ export default {
      * 跳转到指定的item
      */
     scrollToIndex(targetItem) {
-      this.$refs.virtualList.scrollTop = targetItem._topNum
-      this.scrollTopVal = targetItem._topNum
+      this.$refs.virtualList.scrollTop = targetItem._nodeInfo._topNum
+      this.scrollTopVal = targetItem._nodeInfo._topNum
       this.waitScrollOffsetData = Object.assign({}, this.waitScrollOffsetData, {
         isScrollToTarget: true,
       })
     },
     getRenderList() {
       const top = this.scrollTopVal
-      let start = this.findCenterIndex(top, this.realData) - HEAD_PRELOAD
+      let start = this.findCenterIndex(top, this.currentRealData) - HEAD_PRELOAD
       // console.log('start:', start)
       if (start < 0) {
         start = 0
       }
-      const transformHeight = this.realData[start]?._topNum || 0
+      const transformHeight = this.currentRealData[start]?._nodeInfo._topNum || 0
       this.renderStartNode = {
         index: start,
         scrollOffset: top - transformHeight,
@@ -510,10 +537,10 @@ export default {
       }
 
       for (let i = start; i < end; i++) {
-        const currentNode = this.realData[i]
-        const nextNode = this.realData[i + 1]
-        const currentHeight = currentNode._height
-        const nextHeight = nextNode?._height || 0
+        const currentNode = this.currentRealData[i]
+        const nextNode = this.currentRealData[i + 1]
+        const currentHeight = currentNode._nodeInfo._height
+        const nextHeight = nextNode?._nodeInfo._height || 0
         if (currentHeight < this.screenHeight * 1.5) {
           // 只计算小于1.5倍屏幕高度的node的总高度
           heightSum += currentHeight
@@ -525,12 +552,8 @@ export default {
           maxNodeHeight = nextHeight
         }
         if (heightSum < this.screenHeight * 1.5) {
-          if (currentNode.children) {
-            // 解冻children
-            const isFrozen = Object.isFrozen(currentNode.children)
-            if (isFrozen && this.isUnfreeze) {
-              currentNode.children = [].concat(currentNode.children)
-            }
+          if (this.isUnfreeze) {
+            this.unfreezeHandle(this.currentRealData, currentNode, this.freezeKeyName)
           }
           result.push(currentNode)
           if (heightSum + nextHeight > this.screenHeight * 1.5) {
@@ -560,7 +583,7 @@ export default {
           })
           // 渲染列表里没有数据行头部，并且destroyedData里也没数据行头部，则储存到destroyedData
           if (dadaRowHeader === undefined && this.destroyedData[res.rowDataKey] === undefined) {
-            dadaRowHeader = this.realData.find(item => {
+            dadaRowHeader = this.currentRealData.find(item => {
               return item.key === res.rowDataKey
             })
             if (dadaRowHeader) {
@@ -581,7 +604,7 @@ export default {
         const resultEndIdx = resultEndItem.index
         const footerExtraStartIdx = resultEndIdx + 1
         for (let i = footerExtraStartIdx; i < footerExtraStartIdx + FOOTER_PRELOAD; i++) {
-          const endItem = this.realData[i]
+          const endItem = this.currentRealData[i]
           if (endItem) {
             result.push(endItem)
           }
@@ -589,57 +612,67 @@ export default {
       }
 
       this.renderList = result
-      // console.log(this.realData)
+      // console.log(this.currentRealData)
     },
     /**
      * 将列表子项的目标属性解冻，会修改原数据
      */
-    unfreezeHandle(realDataItem) {
-      const unfreezeKeyName = this.unfreezeKeyName
-      let ArrUnfreezeKeyName = []
-      ArrUnfreezeKeyName = ArrUnfreezeKeyName.concat(unfreezeKeyName)
-      ArrUnfreezeKeyName.forEach(keyName => {
-        const temp = realDataItem[keyName]
-        if (temp) {
-          // 解冻children
-          const isFrozen = Object.isFrozen(temp)
-          if (isFrozen && this.isUnfreeze) {
-            if (Array.isArray(temp)) {
-              realDataItem[keyName] = [].concat(temp)
-            } else {
-              realDataItem[keyName] = Object.assign({}, temp)
+    unfreezeHandle(realData, realDataItem, freezeKeyName) {
+      let ArrFreezeKeyName = []
+      if (freezeKeyName) {
+        ArrFreezeKeyName = ArrFreezeKeyName.concat(freezeKeyName)
+        ArrFreezeKeyName.forEach(keyName => {
+          const temp = getValueByPath(realDataItem, keyName)
+          if (temp) {
+            // 解冻temp
+            const isFrozen = Object.isFrozen(temp)
+            if (isFrozen === true) {
+              const [parentKeyName, childrenKeyName] = splitLastDot(keyName)
+              let cloneTemp = temp
+              if (Array.isArray(temp)) {
+                cloneTemp = [...temp]
+              } else {
+                cloneTemp = { ...temp }
+              }
+              if (childrenKeyName === '') {
+                realDataItem[parentKeyName] = cloneTemp
+              } else {
+                getValueByPath(realDataItem, parentKeyName)[childrenKeyName] = cloneTemp
+              }
             }
           }
-        }
-      })
-      return realDataItem
-    },
-    freezeHandle(realDataItem) {
-      const unfreezeKeyName = this.unfreezeKeyName
-      let ArrUnfreezeKeyName = []
-      ArrUnfreezeKeyName = ArrUnfreezeKeyName.concat(unfreezeKeyName)
-      ArrUnfreezeKeyName.forEach(keyName => {
-        const temp = realDataItem[keyName]
-        if (temp) {
-          // 冻结children
-          const isFrozen = Object.isFrozen(temp)
-          if (isFrozen === false) {
-            if (Array.isArray(temp)) {
-              realDataItem[keyName] = [].concat(temp)
-            } else {
-              realDataItem[keyName] = Object.assign({}, temp)
-            }
-            realDataItem[keyName] = Object.freeze(temp)
-          }
-        }
-      })
-      const isFrozen = Object.isFrozen(realDataItem.children)
-      if (isFrozen === false) {
-        // 因为表单更新是update item 的cell属性，所以item的内存地址不能变，不然就失去双向绑定
-        realDataItem.children.forEach(item => {
-          item.cell = cloneDeep(item.cell)
         })
-        realDataItem.children = Object.freeze(realDataItem.children)
+      } else {
+        if (Object.isFrozen(realDataItem)) {
+          realData[realDataItem.index] = { ...realDataItem }
+        }
+      }
+    },
+    /**
+     * 将列表子项的目标属性冻结，会修改原数据
+     */
+    freezeHandle(realData, realDataItem, freezeKeyName) {
+      let ArrFreezeKeyName = []
+      if (freezeKeyName) {
+        ArrFreezeKeyName = ArrFreezeKeyName.concat(freezeKeyName)
+        ArrFreezeKeyName.forEach(keyName => {
+          const temp = getValueByPath(realDataItem, keyName)
+          if (temp) {
+            // 冻结temp
+            const isFrozen = Object.isFrozen(temp)
+            if (isFrozen === false) {
+              const [parentKeyName, childrenKeyName] = splitLastDot(keyName)
+              const cloneTemp = cloneDeep(temp)
+              if (childrenKeyName === '') {
+                realDataItem[parentKeyName] = Object.freeze(cloneTemp)
+              } else {
+                getValueByPath(realDataItem, parentKeyName)[childrenKeyName] = Object.freeze(cloneTemp)
+              }
+            }
+          }
+        })
+      } else {
+        realData[realDataItem.index] = cloneDeep(realDataItem)
       }
     },
     getAverageCompPreHeight(realData) {
@@ -653,8 +686,8 @@ export default {
             count: 0,
           }
         }
-        if (realDataItem._isInitialHeight === false) {
-          averageCompPreHeight[realDataItem.type].totalHeight += realDataItem._height
+        if (realDataItem._nodeInfo._isInitialHeight === false) {
+          averageCompPreHeight[realDataItem.type].totalHeight += realDataItem._nodeInfo._height
           averageCompPreHeight[realDataItem.type].count += 1
         }
       }

@@ -1,8 +1,9 @@
 <template>
   <div id="app">
-    <BaseVirtualList :realData="listData" v-bind="$attrs" v-on="$listeners">
+    <input type="text" style="position: absolute; z-index: 1" @input="changeHandle" />
+    <BaseVirtualList ref="refBaseVirtualList" :realData="listData" :isUnfreeze="true" v-bind="$attrs" v-on="$listeners">
       <template v-slot="{ item: listDataItem }">
-        <div class="list-item" :style="{ backgroundColor: listDataItem.color }">
+        <div class="list-item" :style="{ backgroundColor: listDataItem.color }" @click="clickHandle(listDataItem)">
           {{ listDataItem.content }}
         </div>
       </template>
@@ -65,8 +66,27 @@ export default {
   },
   data() {
     return {
-      listData: getListData(),
+      listData: [],
     }
+  },
+  mounted() {
+    setTimeout(() => {
+      this.listData = getListData()
+    }, 500)
+  },
+  methods: {
+    clickHandle(listDataItem) {
+      listDataItem.content = sjs(randomNum(500, 50))
+      listDataItem.color = rColor()
+    },
+    changeHandle(e) {
+      const idx = parseInt(e.target.value)
+
+      if (!isNaN(idx)) {
+        console.log(idx)
+        this.$refs.refBaseVirtualList.scrollToTargetHandle(idx)
+      }
+    },
   },
 }
 </script>
