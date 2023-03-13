@@ -6,6 +6,7 @@ vue2 虚拟列表组件，为什么又要写个重复的轮子，因为我发现
 ## Table of contents
 
 - [Advantages](#advantages)
+- [Live demo](#live-demo)
 - [**Props type**](#props-type)
   - [Required, props](#required-props)
   - [Optional props](#optional-props)
@@ -19,6 +20,10 @@ vue2 虚拟列表组件，为什么又要写个重复的轮子，因为我发现
 - 大数据列表，渲染性能高，效率高。
 
 - 你不需要关心子项的大小，它会自动计算，渲染效果好。
+
+## Live demo
+
+https://mtian999.github.io/vue-virtual-list/
 
 ## Props type
 
