@@ -10,7 +10,6 @@
             :fixed-height="false"
             :key="item[keyName]"
             :index="item.index"
-            @itemMounted="itemMountedHandle"
             @itemSizeChange="itemSizeChangeHandle"
             @itemSizeChangeEnd="itemSizeChangeEndHandle"
             @itemDestroyed="itemDestroyedHandle"
@@ -35,6 +34,7 @@
           :key="headPreviewItem.key"
           @itemSizeChange="headPreviewItemSizeChangeHandle"
           @itemMounted="headPreviewItemMountedHandle"
+          @itemDestroyed="headPreviewItemDestroyedHandle"
         >
           <slot :item="headPreviewItem"></slot>
         </item>
@@ -273,6 +273,9 @@ export default {
         this.showKey = visibleItem.rowDataKey
       }
     },
+    headPreviewItemDestroyedHandle() {
+      this.updateRealHeight()
+    },
     headPreviewItemMountedHandle({ itemData: headPreviewItem, itemHeight }) {
       if (this.isUpdatingHeadPreviewItem === false) {
         this.isUpdatingHeadPreviewItem = true
@@ -303,10 +306,6 @@ export default {
           this.waitUpdateItemMinIdx = itemData.index
         }
       }
-    },
-    itemMountedHandle() {
-      // 延迟检查有差异更新
-      this.itemSizeChangeEndHandle()
     },
     itemSizeChangeEndHandle() {
       compType = Object.assign({}, compType, this.getAverageCompPreHeight(this.currentRealData))
@@ -377,7 +376,16 @@ export default {
     virtualScroll(e) {
       const diff = e.target.scrollTop - this.scrollTopVal
       this.scrollTopVal += diff
-
+      if (Math.abs(diff) > 200) {
+        // 手动滚动过快还是要渲染
+        if (this.isAmendScrollTop) {
+          this.getRenderList()
+          this.isAmendScrollTop = false
+          return
+        }
+        // 滚动过快则略过渲染
+        return
+      }
       if (this.isAmendScrollTop === false) {
         this.getRenderList()
       }

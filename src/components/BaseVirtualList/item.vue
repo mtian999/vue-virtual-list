@@ -39,7 +39,8 @@ export default {
     const ro = new ResizeObserver(() => {
       // 高度发生变化时，将 'size-change' 事件 emit 到父组件
       const itemHeight = this.$refs.item.offsetHeight
-      if (itemHeight !== this.initItemHeight) {
+
+      if (Math.abs(itemHeight - this.initItemHeight) > 1) {
         this.itemSizeChangeEndHandle({ itemData: this.data, itemHeight })
       }
       this.itemSizeChangeHandle({ itemData: this.data, itemHeight })
