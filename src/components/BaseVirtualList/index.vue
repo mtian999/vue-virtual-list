@@ -576,6 +576,25 @@ export default {
           break
         }
       }
+      // 尾部增加预加载数据
+      const resultEndItem = result[result.length - 1]
+      if (resultEndItem) {
+        const resultEndIdx = resultEndItem.index
+        const footerExtraStartIdx = resultEndIdx + 1
+        for (let i = footerExtraStartIdx; i < footerExtraStartIdx + FOOTER_PRELOAD; i++) {
+          const endItem = this.realData[i]
+          if (endItem) {
+            if (endItem.children) {
+              // 解冻children
+              const isFrozen = Object.isFrozen(endItem.children)
+              if (isFrozen && this.isUnfreeze) {
+                endItem.children = [].concat(endItem.children)
+              }
+            }
+            result.push(endItem)
+          }
+        }
+      }
       if (start === this.renderList?.[0]?.index && this.renderList.length === result.length) {
         // 起点start相同并且result的length也相同，则不更新renderList
         return
@@ -606,18 +625,6 @@ export default {
         } else {
           // 如果渲染数据里没有数据行，则将destroyedData置空
           this.destroyedData = {}
-        }
-      }
-      // 尾部增加预加载数据
-      const resultEndItem = result[result.length - 1]
-      if (resultEndItem) {
-        const resultEndIdx = resultEndItem.index
-        const footerExtraStartIdx = resultEndIdx + 1
-        for (let i = footerExtraStartIdx; i < footerExtraStartIdx + FOOTER_PRELOAD; i++) {
-          const endItem = this.currentRealData[i]
-          if (endItem) {
-            result.push(endItem)
-          }
         }
       }
 
